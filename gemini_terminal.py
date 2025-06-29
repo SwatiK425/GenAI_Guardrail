@@ -20,17 +20,27 @@ POLICIES = {
             "clinical information", "medical diagnosis", "patient treatment",
             "ICD-10", "ICD10", "CPT code", "medical code", "translate code", "code description",
             "ICD code", "ICD9", "ICD 10", "ICD 9", "SNOMED", "LOINC", "medical classification",
-            "explain code", "explain icd", "explain medical code", "map code", "map icd"
+            "explain code", "explain icd", "explain medical code", "map code", "map icd",
+            "medical issue", "health issue", "condition", "symptoms", "treatment", "diagnosis",
+            "medical problem", "health problem", "patient info", "medical info", "health data",
+            "medical details", "health details", "patient details", "medical summary", "health summary"
         ],
         "severity": "critical",
         "override_level": "manager_approval",
         "system_prompt": (
             "You are a Claims Bot assistant for insurance claims processing. "
             "You must NEVER reveal, discuss, or provide any patient medical information, "
-            "diagnoses, conditions, treatment details, health records, or medical code meanings (such as ICD-10, CPT, SNOMED, LOINC, etc.). "
-            "If asked about patient medical information or medical codes, respond with: 'HIPAA VIOLATION BLOCKED'. "
-            "You can help with: claim forms, processing procedures, documentation requirements, and general insurance questions. "
-            "Before answering, check if the query requests patient medical information or medical code translation. "
+            "diagnoses, conditions, treatment details, health records, medical code meanings, "
+            "or any health-related details about patients. "
+            "This includes but is not limited to: medical issues, health issues, conditions, "
+            "symptoms, treatments, diagnoses, medical problems, health problems, patient info, "
+            "medical info, health data, medical details, health details, patient details, "
+            "medical summaries, health summaries, or any medical/health information. "
+            "If asked about ANY patient medical information, health details, or medical codes, "
+            "respond with exactly: 'HIPAA VIOLATION BLOCKED'. "
+            "You can help with: claim forms, processing procedures, documentation requirements, "
+            "and general insurance questions. "
+            "Before answering, check if the query requests ANY patient medical information. "
             "If it does, respond with exactly: HIPAA VIOLATION BLOCKED."
         )
     },
@@ -115,8 +125,42 @@ def log_interaction(session_id, app_context, original_input, system_prompt, raw_
         log_file.write("-" * 80 + "\n\n")
 
 def contains_red_line(user_input, red_lines):
+    """Enhanced red line detection with better pattern matching"""
     user_input_lower = user_input.lower()
-    return any(red_line.lower() in user_input_lower for red_line in red_lines)
+    
+    # Check for exact red line matches
+    for red_line in red_lines:
+        if red_line.lower() in user_input_lower:
+            return True
+    
+    # Additional pattern matching for medical information requests
+    medical_patterns = [
+        "medical issue", "health issue", "condition", "symptoms", "treatment", "diagnosis",
+        "medical problem", "health problem", "patient info", "medical info", "health data",
+        "medical details", "health details", "patient details", "medical summary", "health summary",
+        "primary medical", "medical condition", "health condition", "patient condition"
+    ]
+    
+    for pattern in medical_patterns:
+        if pattern in user_input_lower:
+            return True
+    
+    # Special handling for ICD codes and medical code translation
+    icd_patterns = ["icd-10", "icd10", "icd 10", "icd-9", "icd9", "icd 9"]
+    for pattern in icd_patterns:
+        if pattern in user_input_lower:
+            return True
+    
+    # Check for translation requests with medical codes
+    if any(word in user_input_lower for word in ["translate", "explain", "describe"]) and \
+       any(word in user_input_lower for word in ["code", "icd", "medical", "patient"]):
+        return True
+    
+    # Check for patient record requests
+    if "patient" in user_input_lower and any(word in user_input_lower for word in ["record", "file", "information", "data"]):
+        return True
+    
+    return False
 
 def main():
     # Parse command line arguments
