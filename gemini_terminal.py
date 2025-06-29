@@ -4,6 +4,8 @@ import os
 import sys
 import google.generativeai as genai
 from dotenv import load_dotenv
+import datetime
+import json
 
 def load_api_key():
     """Load Gemini API key from environment variables or .env file"""
@@ -28,9 +30,51 @@ def get_gemini_response(model, prompt):
     except Exception as e:
         return f"❌ Error getting response: {str(e)}"
 
+def log_interaction(session_id, original_input, system_prompt, raw_response, final_response, guardrail_triggered=None, override_justification=None):
+    """Log complete interaction details for audit purposes"""
+    timestamp = datetime.datetime.now().isoformat()
+    
+    # Create structured log entry
+    log_entry = {
+        "timestamp": timestamp,
+        "session_id": session_id,
+        "original_user_input": original_input,
+        "full_system_prompt": system_prompt,
+        "gemini_raw_response": raw_response,
+        "final_response_to_user": final_response,
+        "guardrail_triggered": guardrail_triggered,
+        "override_justification": override_justification,
+        "processing_metadata": {
+            "model_used": "gemini-2.0-flash",
+            "guardrail_method": "system-instruction"
+        }
+    }
+    
+    # Write structured JSON log
+    with open("audit_log.json", "a") as json_file:
+        json_file.write(json.dumps(log_entry) + "\n")
+    
+    # Write human-readable log
+    with open("guardrail_log.txt", "a") as log_file:
+        log_file.write(f"[{timestamp}] === INTERACTION LOG ===\n")
+        log_file.write(f"Session ID: {session_id}\n")
+        log_file.write(f"Original User Input: \"{original_input}\"\n")
+        log_file.write(f"System Prompt: \"{system_prompt}\"\n")
+        log_file.write(f"Gemini Raw Response: \"{raw_response}\"\n")
+        log_file.write(f"Final Response to User: \"{final_response}\"\n")
+        if guardrail_triggered:
+            log_file.write(f"Guardrail Triggered: {guardrail_triggered}\n")
+        if override_justification:
+            log_file.write(f"Override Justification: {override_justification}\n")
+        log_file.write("-" * 80 + "\n\n")
+
 def main():
     print("🤖 Gemini Terminal App")
     print("=" * 40)
+    
+    # Generate session ID
+    session_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    print(f"📋 Session ID: {session_id}")
     
     # Load API key
     api_key = load_api_key()
@@ -49,6 +93,7 @@ def main():
     print("💡 Type your message and press Enter to chat with Gemini")
     print("💡 Type 'quit', 'exit', or 'bye' to exit")
     print("💡 Type 'clear' to clear the screen")
+    print("💡 Type 'audit' to view recent audit logs")
     print("-" * 40)
     
     system_instruction = (
@@ -72,6 +117,19 @@ def main():
                 os.system('clear' if os.name == 'posix' else 'cls')
                 print("🤖 Gemini Terminal App")
                 print("=" * 40)
+                print(f"📋 Session ID: {session_id}")
+                continue
+            
+            # Check for audit command
+            if user_input.lower() == 'audit':
+                print(f"\n📊 Recent Audit Logs:")
+                try:
+                    with open("guardrail_log.txt", "r") as log_file:
+                        recent_logs = log_file.readlines()[-20:]  # Last 20 lines
+                        for line in recent_logs:
+                            print(line.rstrip())
+                except FileNotFoundError:
+                    print("No audit logs found yet.")
                 continue
             
             # Skip empty input
@@ -80,13 +138,62 @@ def main():
             
             # Compose prompt with system instruction
             prompt = f"{system_instruction}\n\nUser query: {user_input}"
-            # prompt = f"User query: {user_input}"
             
             # Get response from Gemini
             print("🤖 Gemini is thinking...")
-            response = get_gemini_response(model, prompt)
+            raw_response = get_gemini_response(model, prompt)
             
-            print(f"\n🤖 Gemini: {response}")
+            # Determine final response and guardrail status
+            final_response = raw_response
+            guardrail_triggered = None
+            override_justification = None
+            
+            if raw_response.strip() == "MALICIOUS PROMPT!!!!":
+                print("🚨 Your input was flagged as unsafe by Gemini.\n")
+                guardrail_triggered = "MALICIOUS_PROMPT_DETECTED"
+                final_response = "🚨 Your input was flagged as unsafe by Gemini.\n"
+                
+                # Ask user if they want to override
+                override = input("Do you want to override the guardrail and proceed? (yes/no): ").strip().lower()
+                if override == "yes":
+                    override_justification = input("Please provide a business justification: ").strip()
+                    
+                    # Send original user input to Gemini (without system instruction)
+                    print("🤖 Gemini (override) is thinking...")
+                    override_raw_response = get_gemini_response(model, user_input)
+                    final_response = f"🤖 Gemini (override): {override_raw_response}"
+                    
+                    # Log the override interaction
+                    log_interaction(
+                        session_id=session_id,
+                        original_input=user_input,
+                        system_prompt="[OVERRIDE - No system instruction]",
+                        raw_response=override_raw_response,
+                        final_response=final_response,
+                        guardrail_triggered=guardrail_triggered,
+                        override_justification=override_justification
+                    )
+                else:
+                    # Log the blocked interaction
+                    log_interaction(
+                        session_id=session_id,
+                        original_input=user_input,
+                        system_prompt=prompt,
+                        raw_response=raw_response,
+                        final_response=final_response,
+                        guardrail_triggered=guardrail_triggered
+                    )
+            else:
+                # Log the normal interaction
+                log_interaction(
+                    session_id=session_id,
+                    original_input=user_input,
+                    system_prompt=prompt,
+                    raw_response=raw_response,
+                    final_response=final_response
+                )
+            
+            print(f"\n{final_response}")
             
         except KeyboardInterrupt:
             print("\n\n👋 Goodbye!")
