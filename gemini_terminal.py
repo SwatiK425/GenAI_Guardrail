@@ -17,20 +17,21 @@ POLICIES = {
         "red_lines": [
             "patient conditions", "diagnosis", "medical history", "treatment details",
             "patient symptoms", "medical records", "health information", "patient data",
-            "clinical information", "medical diagnosis", "patient treatment"
+            "clinical information", "medical diagnosis", "patient treatment",
+            "ICD-10", "ICD10", "CPT code", "medical code", "translate code", "code description",
+            "ICD code", "ICD9", "ICD 10", "ICD 9", "SNOMED", "LOINC", "medical classification",
+            "explain code", "explain icd", "explain medical code", "map code", "map icd"
         ],
         "severity": "critical",
         "override_level": "manager_approval",
         "system_prompt": (
             "You are a Claims Bot assistant for insurance claims processing. "
             "You must NEVER reveal, discuss, or provide any patient medical information, "
-            "diagnoses, conditions, treatment details, or health records. "
-            "This is a CRITICAL HIPAA compliance requirement. "
-            "If asked about patient medical information, respond with: 'HIPAA VIOLATION BLOCKED' "
-            "You can help with: claim forms, processing procedures, documentation requirements, "
-            "and general insurance questions. "
-            "Before answering, check if the query requests patient medical information. "
-            "If it does, respond with exactly: HIPAA VIOLATION BLOCKED"
+            "diagnoses, conditions, treatment details, health records, or medical code meanings (such as ICD-10, CPT, SNOMED, LOINC, etc.). "
+            "If asked about patient medical information or medical codes, respond with: 'HIPAA VIOLATION BLOCKED'. "
+            "You can help with: claim forms, processing procedures, documentation requirements, and general insurance questions. "
+            "Before answering, check if the query requests patient medical information or medical code translation. "
+            "If it does, respond with exactly: HIPAA VIOLATION BLOCKED."
         )
     },
     "general": {
@@ -112,6 +113,10 @@ def log_interaction(session_id, app_context, original_input, system_prompt, raw_
         if override_justification:
             log_file.write(f"Override Justification: {override_justification}\n")
         log_file.write("-" * 80 + "\n\n")
+
+def contains_red_line(user_input, red_lines):
+    user_input_lower = user_input.lower()
+    return any(red_line.lower() in user_input_lower for red_line in red_lines)
 
 def main():
     # Parse command line arguments
@@ -201,6 +206,46 @@ def main():
             
             # Skip empty input
             if not user_input:
+                continue
+            
+            # Pre-LLM red line filter for Claims Bot
+            if app_context == "claims_bot" and contains_red_line(user_input, policy["red_lines"]):
+                print("🚨 HIPAA VIOLATION: Your input was flagged as requesting patient medical information or medical code translation.\n")
+                guardrail_triggered = "HIPAA_VIOLATION_DETECTED_PRELLM"
+                final_response = "🚨 HIPAA VIOLATION: Your input was flagged as requesting patient medical information or medical code translation.\n"
+                override_justification = None
+                # Ask user if they want to override (manager approval required)
+                override = input("Do you want to override the HIPAA guardrail? (yes/no): ").strip().lower()
+                if override == "yes":
+                    print("⚠️  Manager approval required for HIPAA override.")
+                    override_justification = input("Please provide manager-level business justification: ").strip()
+                    # Send original user input to Gemini (without system instruction)
+                    print("🤖 Gemini (HIPAA override) is thinking...")
+                    override_raw_response = get_gemini_response(model, user_input)
+                    final_response = f"🤖 Gemini (HIPAA override): {override_raw_response}"
+                    # Log the override interaction
+                    log_interaction(
+                        session_id=session_id,
+                        app_context=app_context,
+                        original_input=user_input,
+                        system_prompt="[HIPAA OVERRIDE - No system instruction]",
+                        raw_response=override_raw_response,
+                        final_response=final_response,
+                        guardrail_triggered=guardrail_triggered,
+                        override_justification=override_justification
+                    )
+                else:
+                    # Log the blocked interaction
+                    log_interaction(
+                        session_id=session_id,
+                        app_context=app_context,
+                        original_input=user_input,
+                        system_prompt="[PRE-LLM BLOCKED]",
+                        raw_response="[BLOCKED]",
+                        final_response=final_response,
+                        guardrail_triggered=guardrail_triggered
+                    )
+                print(f"\n{final_response}")
                 continue
             
             # Compose prompt with system instruction
