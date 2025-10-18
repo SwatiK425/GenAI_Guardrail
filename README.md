@@ -1,4 +1,4 @@
-# Gemini Terminal App - Policy-Aware Guardrails
+# GenAI_Guardrail
 
 A secure terminal application that demonstrates **policy-aware governance** for LLM applications. This prototype shows how the same LLM backend can serve multiple applications with different compliance requirements through a thin governance layer.
 
